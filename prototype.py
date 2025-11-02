@@ -1,14 +1,12 @@
 import pulp
 
-# =========================================================================
-# PHASE 1: DATA DEFINITION 
-# =========================================================================
+# PHASE 1: DATA DEFINITION
 
 def get_project_data():
     """Collects all necessary project data from the user."""
     
     print("--- 1. Define Activities and Durations ---")
-    DURATIONS = {0: 0} # Start node
+    DURATIONS = {'0': 0} # Start node 
     i = 1
     while True:
         activity_id = input(f"Enter Activity ID {i} (or type 'done'): ").strip()
@@ -64,7 +62,7 @@ def get_project_data():
 
     print("\n--- 3. Define Resource Usage for Each Activity ---")
     # Exclude dummy nodes 0 and 'N' for usage input
-    real_activities = [i for i in ACTIVITIES if i not in [0, 'N']]
+    real_activities = [i for i in ACTIVITIES if i not in ['0', 'N']]
 
     for i in real_activities:
         print(f"\nActivity {i} (Duration {DURATIONS[i]}):")
@@ -117,9 +115,7 @@ def get_project_data():
     
     return data
 
-# =========================================================================
 # PHASE 2 & 3: MILP IMPLEMENTATION AND SOLVING 
-# =========================================================================
 
 def solve_rcpsp(data):
     """
@@ -146,7 +142,7 @@ def solve_rcpsp(data):
         cat=pulp.LpBinary
     )
 
-    # --- OBJECTIVE FUNCTION (Minimize Makespan) ---
+    # --- PRIMARY FUNCTION (Minimize Makespan) ---
     model += pulp.lpSum([t * x['N', t] for t in TIME_HORIZON]), "Objective_Min_Makespan"
 
     # --- CONSTRAINT 1: Start Uniqueness ---
@@ -215,7 +211,7 @@ def solve_rcpsp(data):
         print("{:<10} {:<10} {:<10} {:<10}".format("Activity", "Duration", "Start Time", "Finish Time"))
         print("-" * 45)
         
-        real_activities = sorted([a for a in ACTIVITIES if a not in [0, 'N']])
+        real_activities = sorted([a for a in ACTIVITIES if a not in ['0', 'N']])
         for i in real_activities: 
             s = optimal_schedule.get(i, {'Duration': '-', 'Start': 'N/A', 'Finish': 'N/A'})
             print(f"{i:<10} {s['Duration']:<10} {s['Start']:<10} {s['Finish']:<10}")
@@ -232,10 +228,7 @@ def solve_rcpsp(data):
     else:
         print(f"\nOptimization failed. Status: {status}")
 
-
-# =========================================================================
 # MAIN EXECUTION
-# =========================================================================
 
 if __name__ == "__main__":
     project_data = get_project_data()
