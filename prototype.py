@@ -1,12 +1,12 @@
 import pulp
 
-# PHASE 1: DATA DEFINITION
+# PHASE 1: DATA DEFINITION 
 
 def get_project_data():
     """Collects all necessary project data from the user."""
     
     print("--- 1. Define Activities and Durations ---")
-    DURATIONS = {'0': 0} # Start node 
+    DURATIONS = {'0': 0} 
     i = 1
     while True:
         activity_id = input(f"Enter Activity ID {i} (or type 'done'): ").strip()
@@ -142,7 +142,7 @@ def solve_rcpsp(data):
         cat=pulp.LpBinary
     )
 
-    # --- PRIMARY FUNCTION (Minimize Makespan) ---
+    # --- OBJECTIVE FUNCTION (Minimize Makespan) ---
     model += pulp.lpSum([t * x['N', t] for t in TIME_HORIZON]), "Objective_Min_Makespan"
 
     # --- CONSTRAINT 1: Start Uniqueness ---
@@ -203,18 +203,33 @@ def solve_rcpsp(data):
                     }
                     break
         
-        # --- Print Results ---
+        # --- Print Results (MODIFIED SECTION) ---
         print("\n--- Optimal Schedule Results ---")
         print(f"Minimum Project Makespan (Z): {int(makespan)}")
 
         print("\nOptimal Activity Schedule:")
-        print("{:<10} {:<10} {:<10} {:<10}".format("Activity", "Duration", "Start Time", "Finish Time"))
-        print("-" * 45)
         
-        real_activities = sorted([a for a in ACTIVITIES if a not in ['0', 'N']])
-        for i in real_activities: 
-            s = optimal_schedule.get(i, {'Duration': '-', 'Start': 'N/A', 'Finish': 'N/A'})
-            print(f"{i:<10} {s['Duration']:<10} {s['Start']:<10} {s['Finish']:<10}")
+        print("{:<10} {:<10} {:<10} {:<10} {:<15}".format(
+            "Activity", "Duration", "Start Time", "Finish Time", "Resources"
+        ))
+        print("-" * 60) 
+        
+        
+        schedule_items = [
+            (i, s) for i, s in optimal_schedule.items() 
+            if i not in ['0', 'N'] and s # Ensure 's' is not None
+        ]
+        
+        sorted_schedule_items = sorted(schedule_items, key=lambda item: item[1]['Start'])
+
+        for i, s in sorted_schedule_items:
+            # Get resource string for renewable resources
+            usage_dict = RESOURCE_USAGE_R.get(i, {})
+            usage_strings = [f"{r}: {usage_dict.get(r, 0)}" for r in RESOURCES_R]
+            resource_str = ", ".join(usage_strings)
+            
+            # Print the formatted row
+            print(f"{i:<10} {s['Duration']:<10} {s['Start']:<10} {s['Finish']:<10} {resource_str:<15}")
         
         # NR Check
         print(f"\nNon-Renewable Resource Check:")
