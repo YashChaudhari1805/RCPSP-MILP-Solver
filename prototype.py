@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 import logging
+import time
 
 # ============================================================================
 # LOGGING SETUP
@@ -57,115 +58,11 @@ class DataInputHandler:
             
         except Exception as e:
             logger.error(f"Error loading Excel file: {e}")
+            print(f"✗ Error loading file: {e}")
             return None
     
     @staticmethod
-    def _parse_single_sheet_excel(df):
-        """Parse single-sheet Excel format with ActivityID, Duration, Predecessors, Resource Usage columns."""
-        
-        logger.info("Parsing single-sheet format...")
-        
-        # Extract activities and durations
-        DURATIONS = {'0': 0}
-        for idx, row in df.iterrows():
-            if pd.notna(row['ActivityID']) and row['ActivityID'] != '0':
-                activity_id = str(row['ActivityID']).strip()
-                duration = int(row['Duration']) if pd.notna(row['Duration']) else 0
-                DURATIONS[activity_id] = duration
-        
-        DURATIONS['N'] = 0
-        ACTIVITIES = list(DURATIONS.keys())
-        
-        # Parse resources from the Resource Usage column (e.g., "R1: 5, R2: 3")
-        RESOURCES_R = set()
-        RESOURCE_USAGE_R = {i: {} for i in ACTIVITIES}
-        CAPACITY_R = {}
-        
-        for idx, row in df.iterrows():
-            activity_id = str(row['ActivityID']).strip() if pd.notna(row['ActivityID']) else None
-            
-            if activity_id and activity_id in ACTIVITIES:
-                resource_str = str(row.get('Resource Usage (R1, R2)', '')).strip()
-                
-                if resource_str and resource_str != '-' and resource_str != 'nan':
-                    # Parse format like "R1: 5, R2: 3"
-                    resource_pairs = [x.strip() for x in resource_str.split(',')]
-                    
-                    for pair in resource_pairs:
-                        if ':' in pair:
-                            res_id, usage = pair.split(':')
-                            res_id = res_id.strip()
-                            usage = int(usage.strip())
-                            
-                            RESOURCES_R.add(res_id)
-                            RESOURCE_USAGE_R[activity_id][res_id] = usage
-        
-        RESOURCES_R = sorted(list(RESOURCES_R))
-        
-        # Initialize resource usage dictionary for all activities and resources
-        for activity in ACTIVITIES:
-            for resource in RESOURCES_R:
-                if resource not in RESOURCE_USAGE_R[activity]:
-                    RESOURCE_USAGE_R[activity][resource] = 0
-        
-        # Set capacity based on maximum usage seen (can be overridden)
-        # Default: capacity = 2 * max usage for that resource
-        for resource in RESOURCES_R:
-            max_usage = max(RESOURCE_USAGE_R[activity].get(resource, 0) for activity in ACTIVITIES)
-            CAPACITY_R[resource] = max(max_usage * 2, 10)  # At least 10 units
-        
-        # Parse precedence relationships
-        PRECEDENCE_PAIRS = []
-        prev_activity = '0'  # Start with dummy node
-        
-        for idx, row in df.iterrows():
-            activity_id = str(row['ActivityID']).strip() if pd.notna(row['ActivityID']) else None
-            
-            if activity_id and activity_id in ACTIVITIES and activity_id != '0':
-                predecessors_str = str(row.get('Predecessors', '')).strip()
-                
-                if predecessors_str and predecessors_str != '-' and predecessors_str != 'nan':
-                    # Parse predecessors (can be single or comma-separated, e.g., "A1" or "A1, A2")
-                    predecessors = [p.strip() for p in predecessors_str.split(',')]
-                    
-                    for pred in predecessors:
-                        if pred in ACTIVITIES:
-                            PRECEDENCE_PAIRS.append((pred, activity_id))
-                else:
-                    # If no predecessors specified and it's not dummy node, link to previous
-                    if activity_id != '0':
-                        PRECEDENCE_PAIRS.append((prev_activity, activity_id))
-                
-                prev_activity = activity_id
-        
-        # Ensure final activity links to N
-        if prev_activity != 'N' and prev_activity != '0':
-            PRECEDENCE_PAIRS.append((prev_activity, 'N'))
-        
-        # Non-renewable resources (empty for this format)
-        RESOURCES_NR = []
-        TOTAL_STOCK_NR = {}
-        RESOURCE_USAGE_NR = {i: {} for i in ACTIVITIES}
-        
-        # Calculate time horizon
-        T_MAX = sum(DURATIONS[i] for i in ACTIVITIES if i not in ['0', 'N'])
-        TIME_HORIZON = list(range(T_MAX + 1))
-        
-        logger.info(f"Parsed: {len(ACTIVITIES)} activities, {len(RESOURCES_R)} resources, {len(PRECEDENCE_PAIRS)} precedence relations")
-        
-        return {
-            'ACTIVITIES': ACTIVITIES,
-            'DURATIONS': DURATIONS,
-            'PRECEDENCE_PAIRS': PRECEDENCE_PAIRS,
-            'RESOURCES_R': RESOURCES_R,
-            'CAPACITY_R': CAPACITY_R,
-            'RESOURCE_USAGE_R': RESOURCE_USAGE_R,
-            'RESOURCES_NR': RESOURCES_NR,
-            'TOTAL_STOCK_NR': TOTAL_STOCK_NR,
-            'RESOURCE_USAGE_NR': RESOURCE_USAGE_NR,
-            'TIME_HORIZON': TIME_HORIZON
-        }
-    
+    def _parse_excel_data(activities_df, resources_r_df, resources_nr_df, usage_df, precedence_df):
         """Parse Excel dataframes into project data structure."""
         
         # Parse activities
@@ -218,6 +115,101 @@ class DataInputHandler:
         
         T_MAX = sum(DURATIONS[i] for i in ACTIVITIES if i not in ['0', 'N'])
         TIME_HORIZON = list(range(T_MAX + 1))
+        
+        return {
+            'ACTIVITIES': ACTIVITIES,
+            'DURATIONS': DURATIONS,
+            'PRECEDENCE_PAIRS': PRECEDENCE_PAIRS,
+            'RESOURCES_R': RESOURCES_R,
+            'CAPACITY_R': CAPACITY_R,
+            'RESOURCE_USAGE_R': RESOURCE_USAGE_R,
+            'RESOURCES_NR': RESOURCES_NR,
+            'TOTAL_STOCK_NR': TOTAL_STOCK_NR,
+            'RESOURCE_USAGE_NR': RESOURCE_USAGE_NR,
+            'TIME_HORIZON': TIME_HORIZON
+        }
+    
+    @staticmethod
+    def _parse_single_sheet_excel(df):
+        """Parse single-sheet Excel format with ActivityID, Duration, Predecessors, Resource Usage columns."""
+        
+        logger.info("Parsing single-sheet format...")
+        
+        # Extract activities and durations
+        DURATIONS = {'0': 0}
+        for idx, row in df.iterrows():
+            if pd.notna(row['ActivityID']) and row['ActivityID'] != '0':
+                activity_id = str(row['ActivityID']).strip()
+                duration = int(row['Duration']) if pd.notna(row['Duration']) else 0
+                DURATIONS[activity_id] = duration
+        
+        DURATIONS['N'] = 0
+        ACTIVITIES = list(DURATIONS.keys())
+        
+        # Parse resources from the Resource Usage column (e.g., "R1: 5, R2: 3")
+        RESOURCES_R = set()
+        RESOURCE_USAGE_R = {i: {} for i in ACTIVITIES}
+        CAPACITY_R = {}
+        
+        for idx, row in df.iterrows():
+            activity_id = str(row['ActivityID']).strip() if pd.notna(row['ActivityID']) else None
+            
+            if activity_id and activity_id in ACTIVITIES:
+                resource_str = str(row.get('Resource Usage (R1, R2)', '')).strip()
+                
+                if resource_str and resource_str != '-' and resource_str != 'nan':
+                    # Parse format like "R1: 5, R2: 3"
+                    resource_pairs = [x.strip() for x in resource_str.split(',')]
+                    
+                    for pair in resource_pairs:
+                        if ':' in pair:
+                            res_id, usage = pair.split(':')
+                            res_id = res_id.strip()
+                            usage = int(usage.strip())
+                            
+                            RESOURCES_R.add(res_id)
+                            RESOURCE_USAGE_R[activity_id][res_id] = usage
+        
+        RESOURCES_R = sorted(list(RESOURCES_R))
+        
+        # Initialize resource usage dictionary for all activities and resources
+        for activity in ACTIVITIES:
+            for resource in RESOURCES_R:
+                if resource not in RESOURCE_USAGE_R[activity]:
+                    RESOURCE_USAGE_R[activity][resource] = 0
+        
+        # Set capacity based on maximum usage seen
+        for resource in RESOURCES_R:
+            max_usage = max(RESOURCE_USAGE_R[activity].get(resource, 0) for activity in ACTIVITIES)
+            CAPACITY_R[resource] = max(max_usage * 2, 10)
+        
+        # Parse precedence relationships
+        PRECEDENCE_PAIRS = []
+        
+        for idx, row in df.iterrows():
+            activity_id = str(row['ActivityID']).strip() if pd.notna(row['ActivityID']) else None
+            
+            if activity_id and activity_id in ACTIVITIES and activity_id != '0':
+                predecessors_str = str(row.get('Predecessors', '')).strip()
+                
+                if predecessors_str and predecessors_str != '-' and predecessors_str != 'nan':
+                    # Parse predecessors (can be single or comma-separated)
+                    predecessors = [p.strip() for p in predecessors_str.split(',')]
+                    
+                    for pred in predecessors:
+                        if pred in ACTIVITIES:
+                            PRECEDENCE_PAIRS.append((pred, activity_id))
+        
+        # Non-renewable resources (empty for this format)
+        RESOURCES_NR = []
+        TOTAL_STOCK_NR = {}
+        RESOURCE_USAGE_NR = {i: {} for i in ACTIVITIES}
+        
+        # Calculate time horizon
+        T_MAX = sum(DURATIONS[i] for i in ACTIVITIES if i not in ['0', 'N'])
+        TIME_HORIZON = list(range(T_MAX + 1))
+        
+        logger.info(f"Parsed: {len(ACTIVITIES)} activities, {len(RESOURCES_R)} resources, {len(PRECEDENCE_PAIRS)} precedence relations")
         
         return {
             'ACTIVITIES': ACTIVITIES,
@@ -362,6 +354,16 @@ class DataValidator:
             if pred not in data['ACTIVITIES'] or succ not in data['ACTIVITIES']:
                 issues.append(f"ERROR: Invalid precedence ({pred} -> {succ})")
         
+        # Check for negative durations
+        for activity, duration in data['DURATIONS'].items():
+            if duration < 0:
+                issues.append(f"ERROR: Activity {activity} has negative duration")
+        
+        # Check for zero-capacity resources
+        for resource, capacity in data['CAPACITY_R'].items():
+            if capacity <= 0:
+                issues.append(f"ERROR: Resource {resource} has zero or negative capacity")
+        
         if issues:
             for issue in issues:
                 logger.warning(issue)
@@ -412,10 +414,12 @@ class RCPSPSolver:
         self.model = None
         self.x = None
         self.results = None
+        self.solve_time = 0
     
     def build_model(self):
         """Build the MILP model."""
         logger.info("Building MILP model...")
+        build_start = time.time()
         
         data = self.data
         ACTIVITIES = data['ACTIVITIES']
@@ -474,19 +478,24 @@ class RCPSPSolver:
             ])
             self.model += total <= TOTAL_STOCK_NR[r], f"C4_{r}"
 
-        logger.info(f"Model built with {len(self.model.constraints)} constraints")
+        build_time = time.time() - build_start
+        logger.info(f"Model built with {len(self.model.constraints)} constraints in {build_time:.2f}s")
+        print(f"Model built with {len(self.model.constraints)} constraints in {build_time:.2f}s")
     
     def solve(self):
         """Solve the MILP model."""
         logger.info("Solving MILP model...")
         print("\n--- Starting MILP Optimization ---")
         
+        solve_start = time.time()
         solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=300)
         self.model.solve(solver)
+        self.solve_time = time.time() - solve_start
         
         status = pulp.LpStatus[self.model.status]
-        logger.info(f"Solver status: {status}")
+        logger.info(f"Solver status: {status} (Time: {self.solve_time:.2f}s)")
         print(f"Status: {status}")
+        print(f"Solve Time: {self.solve_time:.2f} seconds")
         
         if status == "Optimal":
             self._extract_results()
@@ -520,37 +529,13 @@ class RCPSPSolver:
                     }
                     break
         
-        # Find concurrent activities (NEW: Feature 1)
-        concurrent_activities = self._find_concurrent_activities(optimal_schedule)
-        
         self.results = {
             "makespan": makespan,
             "schedule": optimal_schedule,
-            "concurrent_activities": concurrent_activities
+            "solve_time": self.solve_time
         }
         
         logger.info(f"Optimal makespan: {makespan}")
-    
-    def _find_concurrent_activities(self, schedule):
-        """Find activities that can run simultaneously."""
-        concurrent = {}
-        
-        # Group activities by time period
-        time_periods = {}
-        for activity, times in schedule.items():
-            if activity not in ['0', 'N']:
-                for t in range(times['Start'], times['Finish']):
-                    if t not in time_periods:
-                        time_periods[t] = []
-                    time_periods[t].append(activity)
-        
-        # Extract concurrent groups
-        for t, activities in time_periods.items():
-            if len(activities) > 1:
-                key = f"Time_{t}"
-                concurrent[key] = activities
-        
-        return concurrent
 
 
 # ============================================================================
@@ -576,20 +561,17 @@ class ResultsExporter:
             schedule_data = self._prepare_schedule_df()
             schedule_data.to_excel(writer, sheet_name='Schedule', index=False)
             
-            # Concurrent activities sheet
-            concurrent_data = self._prepare_concurrent_df()
-            concurrent_data.to_excel(writer, sheet_name='Concurrent_Activities', index=False)
-            
-            # Summary sheet
-            summary_data = self._prepare_summary_df()
-            summary_data.to_excel(writer, sheet_name='Summary', index=False)
-            
             # Resource utilization sheet
             utilization_data = self._prepare_utilization_df()
             utilization_data.to_excel(writer, sheet_name='Resource_Utilization', index=False)
+            
+            # Metadata sheet
+            metadata_data = self._prepare_metadata_df()
+            metadata_data.to_excel(writer, sheet_name='Metadata', index=False)
         
         logger.info(f"Results exported to {filepath}")
         print(f"\n✓ Excel file saved: {filepath}")
+        return str(filepath)
     
     def export_to_text(self):
         """Export results to text file."""
@@ -601,7 +583,8 @@ class ResultsExporter:
             f.write("="*70 + "\n\n")
             
             f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Optimal Project Makespan: {self.results['makespan']}\n\n")
+            f.write(f"Optimal Project Makespan: {self.results['makespan']} days\n")
+            f.write(f"Solver Execution Time: {self.results['solve_time']:.2f} seconds\n\n")
             
             f.write("--- OPTIMAL SCHEDULE ---\n")
             f.write(f"{'Activity':<15} {'Duration':<12} {'Start':<10} {'Finish':<10}\n")
@@ -615,18 +598,12 @@ class ResultsExporter:
             for activity, times in sorted_schedule:
                 f.write(f"{activity:<15} {times['Duration']:<12} {times['Start']:<10} {times['Finish']:<10}\n")
             
-            f.write("\n--- CONCURRENT ACTIVITIES (Can run simultaneously) ---\n")
-            if self.results['concurrent_activities']:
-                for period, activities in self.results['concurrent_activities'].items():
-                    f.write(f"{period}: {', '.join(activities)}\n")
-            else:
-                f.write("No concurrent activities found.\n")
-            
-            f.write("\n--- RESOURCE UTILIZATION ---\n")
-            self._write_resource_utilization(f)
+            f.write("\n--- RESOURCE INFORMATION ---\n")
+            self._write_resource_info(f)
         
         logger.info(f"Results exported to {filepath}")
         print(f"✓ Text file saved: {filepath}")
+        return str(filepath)
     
     def _prepare_schedule_df(self):
         """Prepare schedule dataframe."""
@@ -634,48 +611,51 @@ class ResultsExporter:
         data = []
         for activity, times in schedule.items():
             if activity not in ['0', 'N']:
+                # Get resource usage for this activity
+                resources_str = ""
+                if activity in self.data['RESOURCE_USAGE_R']:
+                    res_list = []
+                    for r, usage in self.data['RESOURCE_USAGE_R'][activity].items():
+                        if usage > 0:
+                            res_list.append(f"{r}: {usage}")
+                    resources_str = ", ".join(res_list)
+                
                 data.append({
                     'Activity': activity,
                     'Duration': times['Duration'],
                     'Start_Time': times['Start'],
-                    'Finish_Time': times['Finish']
+                    'Finish_Time': times['Finish'],
+                    'Resources_Used': resources_str
                 })
         return pd.DataFrame(sorted(data, key=lambda x: x['Start_Time']))
-    
-    def _prepare_concurrent_df(self):
-        """Prepare concurrent activities dataframe."""
-        concurrent = self.results['concurrent_activities']
-        data = []
-        for period, activities in concurrent.items():
-            data.append({
-                'Time_Period': period,
-                'Concurrent_Activities': ', '.join(activities),
-                'Count': len(activities)
-            })
-        return pd.DataFrame(data)
-    
-    def _prepare_summary_df(self):
-        """Prepare summary dataframe."""
-        return pd.DataFrame([{
-            'Metric': 'Optimal Makespan',
-            'Value': self.results['makespan']
-        }, {
-            'Metric': 'Total Activities',
-            'Value': len([a for a in self.data['ACTIVITIES'] if a not in ['0', 'N']])
-        }, {
-            'Metric': 'Concurrent Activity Groups',
-            'Value': len(self.results['concurrent_activities'])
-        }])
     
     def _prepare_utilization_df(self):
         """Prepare resource utilization dataframe."""
         data = []
         
         for r in self.data['RESOURCES_R']:
+            max_capacity = self.data['CAPACITY_R'][r]
+            # Calculate average utilization
+            schedule = self.results['schedule']
+            usage_at_times = []
+            
+            for t in self.data['TIME_HORIZON']:
+                current_usage = 0
+                for activity, times in schedule.items():
+                    if activity not in ['0', 'N']:
+                        if times['Start'] <= t < times['Finish']:
+                            current_usage += self.data['RESOURCE_USAGE_R'].get(activity, {}).get(r, 0)
+                usage_at_times.append(current_usage)
+            
+            avg_utilization = sum(usage_at_times) / len(usage_at_times) if usage_at_times else 0
+            peak_utilization = max(usage_at_times) if usage_at_times else 0
+            
             data.append({
                 'Resource': r,
                 'Type': 'Renewable',
-                'Capacity': self.data['CAPACITY_R'][r]
+                'Capacity': max_capacity,
+                'Peak_Utilization': peak_utilization,
+                'Average_Utilization': f"{avg_utilization:.2f}"
             })
         
         for r in self.data['RESOURCES_NR']:
@@ -687,22 +667,37 @@ class ResultsExporter:
                 'Resource': r,
                 'Type': 'Non-Renewable',
                 'Capacity': self.data['TOTAL_STOCK_NR'][r],
-                'Total_Used': total_used
+                'Peak_Utilization': total_used,
+                'Average_Utilization': '-'
             })
         
         return pd.DataFrame(data)
     
-    def _write_resource_utilization(self, file):
-        """Write resource utilization to text file."""
+    def _prepare_metadata_df(self):
+        """Prepare metadata dataframe."""
+        return pd.DataFrame([
+            {'Metric': 'Optimal Makespan (days)', 'Value': self.results['makespan']},
+            {'Metric': 'Solver Execution Time (seconds)', 'Value': f"{self.results['solve_time']:.2f}"},
+            {'Metric': 'Total Activities', 'Value': len([a for a in self.data['ACTIVITIES'] if a not in ['0', 'N']])},
+            {'Metric': 'Renewable Resources', 'Value': len(self.data['RESOURCES_R'])},
+            {'Metric': 'Non-Renewable Resources', 'Value': len(self.data['RESOURCES_NR'])},
+            {'Metric': 'Precedence Relations', 'Value': len(self.data['PRECEDENCE_PAIRS'])}
+        ])
+    
+    def _write_resource_info(self, file):
+        """Write resource information to text file."""
+        file.write("\nRenewable Resources:\n")
         for r in self.data['RESOURCES_R']:
-            file.write(f"\n{r} (Renewable): Capacity = {self.data['CAPACITY_R'][r]}\n")
+            file.write(f"  {r}: Capacity = {self.data['CAPACITY_R'][r]}\n")
         
-        for r in self.data['RESOURCES_NR']:
-            total_used = sum(
-                self.data['RESOURCE_USAGE_NR'].get(i, {}).get(r, 0)
-                for i in self.data['ACTIVITIES']
-            )
-            file.write(f"\n{r} (Non-Renewable): Total Stock = {self.data['TOTAL_STOCK_NR'][r]}, Used = {total_used}\n")
+        if self.data['RESOURCES_NR']:
+            file.write("\nNon-Renewable Resources:\n")
+            for r in self.data['RESOURCES_NR']:
+                total_used = sum(
+                    self.data['RESOURCE_USAGE_NR'].get(i, {}).get(r, 0)
+                    for i in self.data['ACTIVITIES']
+                )
+                file.write(f"  {r}: Total Stock = {self.data['TOTAL_STOCK_NR'][r]}, Used = {total_used}\n")
 
 
 # ============================================================================
@@ -728,11 +723,13 @@ def main():
     
     if data is None:
         print("Failed to load data. Exiting.")
+        logger.error("Failed to load data")
         return
     
     # Validate data
     if not DataValidator.validate_data(data):
         print("Data validation failed. Exiting.")
+        logger.error("Data validation failed")
         return
     
     # Solve
@@ -741,34 +738,33 @@ def main():
     
     if solver.solve():
         # Display results
-        print("\n--- OPTIMAL SCHEDULE RESULTS ---")
-        print(f"Minimum Project Makespan: {solver.results['makespan']}")
+        print("\n" + "="*70)
+        print("--- OPTIMAL SCHEDULE RESULTS ---")
+        print("="*70)
+        print(f"Minimum Project Makespan: {solver.results['makespan']} days")
+        print(f"Solver Time: {solver.results['solve_time']:.2f} seconds")
         
         print("\nOptimal Activity Schedule:")
         print(f"{'Activity':<12} {'Duration':<12} {'Start':<10} {'Finish':<10}")
         print("-"*45)
         
         schedule = solver.results['schedule']
-        for activity, times in sorted(
-            schedule.items(),
+        sorted_schedule = sorted(
+            [(a, t) for a, t in schedule.items() if a not in ['0', 'N']],
             key=lambda x: x[1]['Start']
-        ):
-            if activity not in ['0', 'N']:
-                print(f"{activity:<12} {times['Duration']:<12} {times['Start']:<10} {times['Finish']:<10}")
+        )
         
-        # Display concurrent activities (Feature 1)
-        if solver.results['concurrent_activities']:
-            print("\n--- CONCURRENT ACTIVITIES ---")
-            print("(Activities that can run simultaneously):")
-            for period, activities in solver.results['concurrent_activities'].items():
-                print(f"  {period}: {', '.join(activities)}")
+        for activity, times in sorted_schedule:
+            print(f"{activity:<12} {times['Duration']:<12} {times['Start']:<10} {times['Finish']:<10}")
         
         # Export results
-        print("\n--- Export Options ---")
+        print("\n" + "="*70)
+        print("--- Export Options ---")
         print("1. Export to Excel")
         print("2. Export to Text")
         print("3. Both")
-        export_choice = input("\nSelect export option (1, 2, or 3): ").strip()
+        print("4. Skip Export")
+        export_choice = input("\nSelect export option (1, 2, 3, or 4): ").strip()
         
         exporter = ResultsExporter(solver.results, data)
         
@@ -776,11 +772,14 @@ def main():
             exporter.export_to_excel()
         if export_choice in ['2', '3']:
             exporter.export_to_text()
+        if export_choice == '4':
+            print("Skipping export.")
         
         print("\n✓ Process completed successfully!")
         logger.info("Process completed successfully")
     else:
         print("\n✗ Solver failed to find optimal solution.")
+        logger.error("Solver failed to find optimal solution")
 
 
 if __name__ == "__main__":
